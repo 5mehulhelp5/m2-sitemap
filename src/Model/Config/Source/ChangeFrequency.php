@@ -2,17 +2,27 @@
 
 declare(strict_types=1);
 
+/**
+ * @author      Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
+ * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
 namespace Infrangible\Sitemap\Model\Config\Source;
 
 use Magento\Framework\Data\OptionSourceInterface;
 
 /**
- * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
- * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ * The change frequencies of the sitemap protocol.
  */
 class ChangeFrequency implements OptionSourceInterface
 {
+    /**
+     * Returns the change frequencies as options.
+     *
+     * @return array
+     * @phpstan-return array<int, array{value: string, label: \Magento\Framework\Phrase}>
+     */
     public function toOptionArray(): array
     {
         return [
@@ -23,19 +33,6 @@ class ChangeFrequency implements OptionSourceInterface
             ['value' => 'monthly', 'label' => __('Monthly')],
             ['value' => 'yearly', 'label' => __('Yearly')],
             ['value' => 'never', 'label' => __('Never')]
-        ];
-    }
-
-    public function toArray(): array
-    {
-        return [
-            'always'  => __('Always'),
-            'hourly'  => __('Hourly'),
-            'daily'   => __('Daily'),
-            'weekly'  => __('Weekly'),
-            'monthly' => __('Monthly'),
-            'yearly'  => __('Yearly'),
-            'never'   => __('Never'),
         ];
     }
 }

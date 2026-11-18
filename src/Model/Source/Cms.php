@@ -2,137 +2,119 @@
 
 declare(strict_types=1);
 
+/**
+ * @author      Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
+ * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
 namespace Infrangible\Sitemap\Model\Source;
 
+use FeWeDev\Base\Variables;
 use Infrangible\Core\Helper\Stores;
-use Infrangible\Core\Helper\Url;
+use Infrangible\Sitemap\Helper\Data;
 use Infrangible\Sitemap\Model\ISitemapUrl;
 use Infrangible\Sitemap\Model\SitemapUrlFactory;
 use Magento\Cms\Model\Page;
 use Magento\Framework\Event\ManagerInterface;
 use Magento\Framework\Exception\NoSuchEntityException;
-use Magento\Framework\UrlInterface;
 use Psr\Log\LoggerInterface;
 
 /**
- * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
- * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ * The active CMS pages of the store, the home page with the base URL of the store and priority 1.0, without the page
+ * of the 404 error.
+ *
+ * Event: infrangible_sitemap_transform_cms (sitemap_url, cms_page) for every page; URLs without URL are not written.
  */
 class Cms implements ISource
 {
-    /** @var Url */
-    protected $urlHelper;
+    /** Configuration of the home page and the 404 page: the identifier, or "identifier|page ID" if it is not unique. */
+    public const XML_PATH_HOME_PAGE = 'web/default/cms_home_page';
+    public const XML_PATH_NO_ROUTE_PAGE = 'web/default/cms_no_route';
 
-    /** @var Stores */
-    protected $storeHelper;
-
-    /** @var \Infrangible\Core\Helper\Cms */
-    protected $cmsHelper;
-
-    /** @var LoggerInterface */
-    protected $logging;
-
-    /** @var SitemapUrlFactory */
-    protected $sitemapUrlFactory;
-
-    /** @var string */
-    protected $homeIdentifier;
-
-    /** @var string */
-    protected $noRouteIdentifier;
-
-    /** @var ManagerInterface */
-    protected $eventManager;
-
+    /**
+     * @param Variables $variables
+     * @param Stores $storeHelper
+     * @param Data $sitemapHelper
+     * @param \Infrangible\Core\Helper\Cms $cmsHelper
+     * @param LoggerInterface $logging
+     * @param SitemapUrlFactory $sitemapUrlFactory
+     * @param ManagerInterface $eventManager
+     */
     public function __construct(
-        Url $urlHelper,
-        Stores $storeHelper,
-        \Infrangible\Core\Helper\Cms $cmsHelper,
-        LoggerInterface $logging,
-        SitemapUrlFactory $sitemapUrlFactory,
-        ManagerInterface $eventManager
+        protected Variables $variables,
+        protected Stores $storeHelper,
+        protected Data $sitemapHelper,
+        protected \Infrangible\Core\Helper\Cms $cmsHelper,
+        protected LoggerInterface $logging,
+        protected SitemapUrlFactory $sitemapUrlFactory,
+        protected ManagerInterface $eventManager
     ) {
-        $this->urlHelper = $urlHelper;
-        $this->storeHelper = $storeHelper;
-        $this->cmsHelper = $cmsHelper;
-        $this->logging = $logging;
-        $this->sitemapUrlFactory = $sitemapUrlFactory;
-        $this->eventManager = $eventManager;
-
-        $this->homeIdentifier = $this->storeHelper->getStoreConfig('web/default/cms_home_page');
-        $this->noRouteIdentifier = $this->storeHelper->getStoreConfig('web/default/cms_no_route');
     }
 
+    /**
+     * Returns the active CMS pages of the store that are not excluded from the sitemap.
+     *
+     * @param int $storeId
+     *
+     * @return Page[]
+     */
     public function getStoreData(int $storeId): array
     {
-        $cmsExport = $this->storeHelper->getStoreConfigFlag(
-            'infrangible_sitemap/cms/export',
-            true,
-            $storeId
-        );
-
-        if (! $cmsExport) {
+        if (! $this->storeHelper->getStoreConfigFlag('infrangible_sitemap/cms/export', true, $storeId)) {
             return [];
         }
 
         $collection = $this->cmsHelper->getCmsPageCollection();
-
         $collection->addStoreFilter($storeId);
-        $collection->addFieldToFilter(
-            'exclude_from_sitemap',
-            0
-        );
+        $collection->addFieldToFilter('is_active', 1);
+        $collection->addFieldToFilter('exclude_from_sitemap', 0);
 
-        return $collection->getItems();
+        $pages = [];
+
+        foreach ($collection->getItems() as $page) {
+            if ($page instanceof Page) {
+                $pages[] = $page;
+            }
+        }
+
+        return $pages;
     }
 
     /**
-     * @param Page[] $storeData
+     * Transforms the CMS pages into sitemap URLs.
+     *
+     * @param int $storeId
+     * @param array $storeData
+     *
+     * @phpstan-param array<int|string, mixed> $storeData
      *
      * @return ISitemapUrl[]
      * @throws NoSuchEntityException
      */
     public function transformStoreData(int $storeId, array $storeData): array
     {
-        $defaultChangeFrequency = $this->storeHelper->getStoreConfig(
-            'infrangible_sitemap/cms/changeFrequency',
-            'yearly',
-            false,
-            $storeId
-        );
-        $defaultPriority = $this->storeHelper->getStoreConfig(
-            'infrangible_sitemap/cms/priority',
-            '0.5',
-            false,
-            $storeId
-        );
+        $changeFrequency = $this->sitemapHelper->getChangeFrequency('cms', $storeId, 'yearly');
+        $priority = $this->sitemapHelper->getPriority('cms', $storeId, '0.5');
 
         $urls = [];
 
         foreach ($storeData as $cmsPage) {
-            $cmsPageData = $this->getCmsPageData(
-                $cmsPage,
-                $storeId,
-                $defaultChangeFrequency,
-                $defaultPriority
-            );
+            if (! $cmsPage instanceof Page) {
+                continue;
+            }
 
             $sitemapUrl = $this->createSitemapUrlModel();
 
+            $cmsPageData = $this->getCmsPageData($cmsPage, $storeId, $changeFrequency, $priority);
+
             if (count($cmsPageData) > 0) {
-                $this->populateSitemapUrl(
-                    $sitemapUrl,
-                    $cmsPageData
-                );
+                $this->populateSitemapUrl($sitemapUrl, $cmsPageData);
             }
 
             $this->eventManager->dispatch(
                 'infrangible_sitemap_transform_cms',
-                [
-                    'sitemap_url' => $sitemapUrl,
-                    'cms_page'    => $cmsPage
-                ]
+                ['sitemap_url' => $sitemapUrl, 'cms_page' => $cmsPage]
             );
 
             if ($sitemapUrl->isValid()) {
@@ -144,66 +126,99 @@ class Cms implements ISource
     }
 
     /**
+     * Returns URL, date of the last change, change frequency and priority of the page; none for the 404 page.
+     *
+     * @param Page $cmsPage
+     * @param int $storeId
+     * @param string $changeFrequency
+     * @param string $priority
+     *
+     * @return string[]
      * @throws NoSuchEntityException
      */
     protected function getCmsPageData(Page $cmsPage, int $storeId, string $changeFrequency, string $priority): array
     {
-        if ($cmsPage->getIdentifier() == $this->homeIdentifier) {
-            $this->logging->debug(
-                sprintf(
-                    'Exporting CMS home page with title: %s in store with id: %s',
-                    $cmsPage->getTitle(),
-                    $storeId
-                )
-            );
-
-            return [
-                $this->storeHelper->getStore($storeId)->getBaseUrl(UrlInterface::URL_TYPE_WEB),
-                date(
-                    'Y-m-d',
-                    strtotime($cmsPage->getUpdateTime())
-                ),
-                $changeFrequency,
-                '1.0'
-            ];
-        } elseif ($cmsPage->getIdentifier() == $this->noRouteIdentifier) {
+        if ($this->isConfiguredPage($cmsPage, self::XML_PATH_NO_ROUTE_PAGE, $storeId)) {
             return [];
-        } else {
+        }
+
+        $lastModified = $this->sitemapHelper->getLastModified($cmsPage->getUpdateTime());
+
+        if ($this->isConfiguredPage($cmsPage, self::XML_PATH_HOME_PAGE, $storeId)) {
             $this->logging->debug(
-                sprintf(
-                    'Exporting CMS page with identifier: %s, title: %s in store with id: %s',
-                    $cmsPage->getIdentifier(),
-                    $cmsPage->getTitle(),
-                    $storeId
-                )
+                sprintf('Exporting CMS home page with title: %s in store with ID: %d', $cmsPage->getTitle(), $storeId)
             );
 
-            return [
-                $this->urlHelper->getUrl(
-                    '',
-                    null,
-                    ['_direct' => $cmsPage->getIdentifier()],
-                    $storeId
-                ),
-                date(
-                    'Y-m-d',
-                    strtotime($cmsPage->getUpdateTime())
-                ),
-                $changeFrequency,
-                $priority
-            ];
+            return [$this->sitemapHelper->getBaseUrl($storeId), $lastModified, $changeFrequency, '1.0'];
         }
+
+        $this->logging->debug(
+            sprintf(
+                'Exporting CMS page with identifier: %s, title: %s in store with ID: %d',
+                $cmsPage->getIdentifier(),
+                $cmsPage->getTitle(),
+                $storeId
+            )
+        );
+
+        return [
+            $this->sitemapHelper->getUrl((string)$cmsPage->getIdentifier(), $storeId),
+            $lastModified,
+            $changeFrequency,
+            $priority
+        ];
     }
 
+    /**
+     * Tells whether the page is the one of the configuration path in the store (home page or 404 page).
+     *
+     * The value is the identifier, or "identifier|page ID" if the identifier is not unique.
+     *
+     * @param Page $cmsPage
+     * @param string $configPath
+     * @param int $storeId
+     *
+     * @return bool
+     */
+    protected function isConfiguredPage(Page $cmsPage, string $configPath, int $storeId): bool
+    {
+        $value = $this->variables->stringValueOrDefault(
+            $this->storeHelper->getStoreConfig($configPath, null, false, $storeId)
+        );
+
+        if ($value === '') {
+            return false;
+        }
+
+        $parts = explode('|', $value, 2);
+
+        if ($parts[ 0 ] !== $cmsPage->getIdentifier()) {
+            return false;
+        }
+
+        return ! isset($parts[ 1 ]) || $parts[ 1 ] === (string)$cmsPage->getId();
+    }
+
+    /**
+     * Returns a new sitemap URL.
+     *
+     * @return ISitemapUrl
+     */
     public function createSitemapUrlModel(): ISitemapUrl
     {
         return $this->sitemapUrlFactory->create();
     }
 
-    public function populateSitemapUrl(
-        ISitemapUrl $sitemapUrl,
-        array $cmsPageData
-    ): void {
+    /**
+     * Sets URL, date of the last change, change frequency and priority.
+     *
+     * @param ISitemapUrl $sitemapUrl
+     * @param string[] $cmsPageData URL, date of the last change, change frequency and priority
+     *
+     * @return void
+     */
+    public function populateSitemapUrl(ISitemapUrl $sitemapUrl, array $cmsPageData): void
+    {
         [$url, $lastModified, $changeFrequency, $priority] = $cmsPageData;
 
         $sitemapUrl->setUrl($url);

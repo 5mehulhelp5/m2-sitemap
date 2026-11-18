@@ -2,7 +2,7 @@
 
 <!--
  * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
  * @license     http://www.opensource.org/licenses/mit-license.php MIT
 -->
 <config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Config:etc/system_file.xsd">
@@ -17,15 +17,17 @@
                     <label>Export</label>
                     <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
                 </field>
-                <field id="file_name" translate="label" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="file_name" translate="label comment" type="text" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>File Name</label>
+                    <comment>Relative to the document root, for example: sitemap/en.xml</comment>
+                    <validate>required-entry</validate>
                     <depends>
                         <field id="export">1</field>
                     </depends>
                 </field>
-                <field id="main" translate="label" type="select" sortOrder="30" showInDefault="1" showInWebsite="0" showInStore="0">
+                <field id="main" translate="label comment" type="select" sortOrder="30" showInDefault="1" showInWebsite="0" showInStore="0">
                     <label>Generate Main Sitemap</label>
-                    <comment>In case website/store specific files are generated.</comment>
+                    <comment>If the stores have several files: sitemap.xml becomes the index of their files.</comment>
                     <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
                     <depends>
                         <field id="export">1</field>
@@ -45,8 +47,10 @@
                         <field id="export">1</field>
                     </depends>
                 </field>
-                <field id="priority" translate="label" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="priority" translate="label comment" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Priority</label>
+                    <comment>From 0.0 to 1.0</comment>
+                    <validate>required-entry validate-number validate-number-range number-range-0-1</validate>
                     <depends>
                         <field id="export">1</field>
                     </depends>
@@ -65,8 +69,10 @@
                         <field id="export">1</field>
                     </depends>
                 </field>
-                <field id="priority" translate="label" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="priority" translate="label comment" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Priority</label>
+                    <comment>From 0.0 to 1.0</comment>
+                    <validate>required-entry validate-number validate-number-range number-range-0-1</validate>
                     <depends>
                         <field id="export">1</field>
                     </depends>
@@ -85,8 +91,10 @@
                         <field id="export">1</field>
                     </depends>
                 </field>
-                <field id="priority" translate="label" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="priority" translate="label comment" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Priority</label>
+                    <comment>From 0.0 to 1.0</comment>
+                    <validate>required-entry validate-number validate-number-range number-range-0-1</validate>
                     <depends>
                         <field id="export">1</field>
                     </depends>

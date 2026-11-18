@@ -2,108 +2,120 @@
 
 declare(strict_types=1);
 
-namespace Infrangible\Sitemap\Model;
-
-use FeWeDev\Base\Variables;
-use Infrangible\Core\Helper\Files;
-use Infrangible\Core\Helper\Stores;
-use Infrangible\Sitemap\Helper\Data;
-use Magento\Framework\App\Filesystem\DirectoryList;
-use Magento\Framework\Data\Collection\EntityFactoryInterface;
-use Magento\Framework\DataObject;
-
 /**
  * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
  * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
+namespace Infrangible\Sitemap\Model;
+
+use Exception;
+use FeWeDev\Base\Variables;
+use Infrangible\Core\Helper\Stores;
+use Infrangible\Sitemap\Helper\Data;
+use Magento\Framework\Data\Collection\EntityFactoryInterface;
+use Magento\Framework\DataObject;
+use Magento\Framework\Filesystem\Driver\File;
+use Psr\Log\LoggerInterface;
+
+/**
+ * The sitemap files of the stores for the list in the admin: file name, stores, date of the file and link.
  */
 class Collection extends \Magento\Framework\Data\Collection
 {
-    /** @var Variables */
-    protected $variables;
-
-    /** @var DirectoryList */
-    protected $directoryList;
-
-    /** @var Stores */
-    protected $storeHelper;
-
-    /** @var Files */
-    protected $fileHelper;
-
-    /** @var Data */
-    protected $sitemapHelper;
-
     /**
-     * @throws \Exception
+     * @param EntityFactoryInterface $entityFactory
+     * @param Variables $variables
+     * @param Stores $storeHelper
+     * @param Data $sitemapHelper
+     * @param Writer $writer
+     * @param File $file
+     * @param LoggerInterface $logging
      */
     public function __construct(
         EntityFactoryInterface $entityFactory,
-        Variables $variables,
-        DirectoryList $directoryList,
-        Stores $storeHelper,
-        Files $fileHelper,
-        Data $sitemapHelper
+        protected Variables $variables,
+        protected Stores $storeHelper,
+        protected Data $sitemapHelper,
+        protected Writer $writer,
+        protected File $file,
+        protected LoggerInterface $logging
     ) {
         parent::__construct($entityFactory);
+    }
 
-        $this->variables = $variables;
-        $this->directoryList = $directoryList;
-        $this->storeHelper = $storeHelper;
-        $this->fileHelper = $fileHelper;
-        $this->sitemapHelper = $sitemapHelper;
+    /**
+     * Loads a row for every file name of the stores whose sitemap is generated.
+     *
+     * @param bool $printQuery
+     * @param bool $logQuery
+     *
+     * @return $this
+     * @throws Exception
+     */
+    public function loadData($printQuery = false, $logQuery = false): static
+    {
+        if ($this->isLoaded()) {
+            return $this;
+        }
 
-        $fileNames = [];
+        $storeIdsByFileName = [];
 
         foreach ($this->storeHelper->getStores() as $store) {
             $storeId = $this->variables->intValue($store->getId());
 
             if ($this->sitemapHelper->isEnabled($storeId)) {
-                $fileName = $this->storeHelper->getStoreConfig(
-                    'infrangible_sitemap/general/file_name',
-                    'sitemap.xml',
-                    false,
-                    $storeId
-                );
-
-                $fileNames[ $fileName ][] = $storeId;
+                $storeIdsByFileName[ $this->sitemapHelper->getFileName($storeId) ][] = $storeId;
             }
         }
 
-        $publicUrlPath = $this->directoryList->getUrlPath('pub');
+        foreach ($storeIdsByFileName as $fileName => $storeIds) {
+            $modified = $this->getModifiedTime($fileName);
+            $link = $modified === null ? '' : $this->sitemapHelper->getBaseUrl($storeIds[ 0 ]) . $fileName;
 
-        foreach ($fileNames as $fileName => $storeIds) {
-            $filePath = $this->fileHelper->determineFilePath(
-                $publicUrlPath === 'pub' ? $fileName : sprintf(
-                    'pub/%s',
-                    $fileName
-                )
+            $item = new DataObject();
+            $item->setData(
+                [
+                    'id'         => $fileName,
+                    'filename'   => $fileName,
+                    'store_ids'  => implode(',', $storeIds),
+                    'created_at' => $modified === null ? '' : gmdate('Y-m-d H:i:s', $modified),
+                    'link'       => $link
+                ]
             );
 
-            $item = [
-                'id'         => $fileName,
-                'filename'   => $fileName,
-                'store_ids'  => implode(
-                    ',',
-                    $storeIds
-                ),
-                'created_at' => file_exists($filePath) ? date(
-                    'Y-m-d H:i:s',
-                    filemtime($filePath)
-                ) : '',
-                'link'       => file_exists($filePath) ? sprintf(
-                    '%s%s',
-                    $this->storeHelper->getWebUrl(),
-                    $fileName
-                ) : ''
-            ];
-
-            $dataObject = new DataObject();
-            $dataObject->setData($item);
-
-            $this->_items[] = $dataObject;
+            $this->addItem($item);
         }
 
         $this->_setIsLoaded();
+
+        return $this;
+    }
+
+    /**
+     * Returns the time of the last change of the file, or null if it does not exist.
+     *
+     * @param string $fileName
+     *
+     * @return int|null
+     */
+    protected function getModifiedTime(string $fileName): ?int
+    {
+        try {
+            $filePath = $this->writer->getFilePath($fileName);
+
+            if (! $this->file->isFile($filePath)) {
+                return null;
+            }
+
+            $modified = $this->file->stat($filePath)[ 'mtime' ] ?? null;
+
+            return is_int($modified) ? $modified : null;
+        } catch (Exception $exception) {
+            $this->logging->error($exception->getMessage());
+
+            return null;
+        }
     }
 }

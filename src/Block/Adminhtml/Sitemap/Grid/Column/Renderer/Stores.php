@@ -2,95 +2,85 @@
 
 declare(strict_types=1);
 
+/**
+ * @author      Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
+ * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
 namespace Infrangible\Sitemap\Block\Adminhtml\Sitemap\Grid\Column\Renderer;
 
+use FeWeDev\Base\Variables;
 use Magento\Backend\Block\Context;
 use Magento\Backend\Block\Widget\Grid\Column\Renderer\AbstractRenderer;
 use Magento\Framework\DataObject;
+use Magento\Framework\Exception\NoSuchEntityException;
+use Magento\Store\Model\Group;
+use Magento\Store\Model\Website;
 
 /**
- * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
- * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ * Renders the stores of a sitemap file, grouped by website and store group.
  */
 class Stores extends AbstractRenderer
 {
-    /** @var \Infrangible\Core\Helper\Stores */
-    protected $storeHelper;
-
-    public function __construct(Context $context, \Infrangible\Core\Helper\Stores $storeHelper, array $data = [])
-    {
-        parent::__construct(
-            $context,
-            $data
-        );
-
-        $this->storeHelper = $storeHelper;
+    /**
+     * @param Context $context
+     * @param \Infrangible\Core\Helper\Stores $storeHelper
+     * @param Variables $variables
+     * @param array $data
+     * @phpstan-param array<string, mixed> $data
+     */
+    public function __construct(
+        Context $context,
+        protected \Infrangible\Core\Helper\Stores $storeHelper,
+        protected Variables $variables,
+        array $data = []
+    ) {
+        parent::__construct($context, $data);
     }
 
     /**
-     * @throws \Exception
+     * Returns the websites, store groups and stores of the comma separated store IDs of the row.
+     *
+     * @param DataObject $row
+     *
+     * @return string
+     * @throws NoSuchEntityException
      */
     public function render(DataObject $row): string
     {
-        $column = $this->getColumn();
-
-        $value = $row->getData($column->getData('index'));
-
+        $index = $this->getColumn()->getData('index');
         $storeIds = explode(
             ',',
-            $value
+            is_string($index) ? $this->variables->stringValueOrDefault($row->getData($index)) : ''
         );
 
-        $data = [];
+        $names = [];
 
         foreach ($this->storeHelper->getStores() as $store) {
-            $storeId = $store->getId();
+            $storeGroup = $store->getGroup();
+            $website = $storeGroup instanceof Group ? $storeGroup->getWebsite() : null;
 
-            if (in_array(
-                $storeId,
-                $storeIds
-            )) {
-                $storeGroup = $store->getGroup();
-                $website = $storeGroup->getWebsite();
-
-                $data[ $website->getName() ][ $storeGroup->getName() ][] = $store->getName();
+            if ($storeGroup instanceof Group && $website instanceof Website &&
+                in_array((string)$store->getId(), $storeIds, true)) {
+                $names[ (string)$website->getName() ][ (string)$storeGroup->getName() ][] = (string)$store->getName();
             }
         }
 
         $result = '<div>';
 
-        foreach ($data as $websiteName => $websiteStoreGroups) {
-            $result .= sprintf(
-                '%s<br/>',
-                $websiteName
-            );
+        foreach ($names as $websiteName => $storeGroups) {
+            $result .= $this->_escaper->escapeHtml($websiteName) . '<br/>';
 
-            foreach ($websiteStoreGroups as $storeGroupName => $storeNames) {
-                $result .= sprintf(
-                    '%s%s<br/>',
-                    str_repeat(
-                        '&nbsp;',
-                        3
-                    ),
-                    $storeGroupName
-                );
+            foreach ($storeGroups as $storeGroupName => $storeNames) {
+                $result .= str_repeat('&nbsp;', 3) . $this->_escaper->escapeHtml($storeGroupName) . '<br/>';
 
                 foreach ($storeNames as $storeName) {
-                    $result .= sprintf(
-                        '%s%s<br/>',
-                        str_repeat(
-                            '&nbsp;',
-                            6
-                        ),
-                        $storeName
-                    );
+                    $result .= str_repeat('&nbsp;', 6) . $this->_escaper->escapeHtml($storeName) . '<br/>';
                 }
             }
         }
 
-        $result .= '</div>';
-
-        return $result;
+        return $result . '</div>';
     }
 }

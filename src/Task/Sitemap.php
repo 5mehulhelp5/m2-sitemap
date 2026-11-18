@@ -2,73 +2,86 @@
 
 declare(strict_types=1);
 
+/**
+ * @author      Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
+ * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
 namespace Infrangible\Sitemap\Task;
 
-use FeWeDev\Base\Files;
+use Exception;
 use FeWeDev\Base\Variables;
 use Infrangible\Core\Helper\Registry;
 use Infrangible\Core\Helper\Stores;
-use Infrangible\Core\Helper\Xml;
 use Infrangible\SimpleMail\Model\MailFactory;
+use Infrangible\Sitemap\Helper\Data;
 use Infrangible\Sitemap\Model\ISitemapUrl;
-use Infrangible\Task\Helper\Data;
+use Infrangible\Sitemap\Model\Writer;
+use Infrangible\Task\Model\ResourceModel\RunFactory as RunResourceFactory;
 use Infrangible\Task\Model\RunFactory;
 use Infrangible\Task\Task\Base;
 use Magento\Framework\App\Filesystem\DirectoryList;
+use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Exception\NoSuchEntityException;
+use Magento\Framework\Filesystem\Driver\File;
 use Psr\Log\LoggerInterface;
 
 /**
- * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
- * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ * Generates the sitemaps: the URLs of the sources of every store go into the file of the store
+ * (infrangible_sitemap/general/file_name); stores with the same file share it. With several files, the main sitemap
+ * (sitemap.xml) is the index of all files, if enabled.
+ *
+ * Without file name, the task generates the sitemaps of all stores (admin store) or of the store of the run; with a
+ * file name (generate in the admin), the sitemap of the stores with this file.
  */
 class Sitemap extends Base
 {
-    /** @var Variables */
-    protected $variables;
-
-    /** @var Stores */
-    protected $storeHelper;
-
-    /** @var \Infrangible\Sitemap\Helper\Data */
-    protected $sitemapHelper;
-
-    /** @var \Infrangible\Core\Helper\Files */
-    protected $fileHelper;
-
-    /** @var Xml */
-    protected $xmlHelper;
+    /** File of the main sitemap, the index of the files of the stores. */
+    public const MAIN_FILE_NAME = 'sitemap.xml';
 
     /** @var string|null */
-    private $fileName;
+    private ?string $fileName = null;
 
     /** @var bool */
-    private $emptyRun = true;
+    private bool $emptyRun = true;
 
-    /** @var array<string, ISitemapUrl[]> */
-    private $urls = [];
+    /** @var array<string, ISitemapUrl[]> URLs by file name */
+    private array $urls = [];
 
-    /** @var int */
-    private $chunkSize = 50000;
+    /** @var array<string, int> the first store of every file, whose base URL the file uses */
+    private array $fileStoreIds = [];
 
+    /**
+     * @param File $file
+     * @param Registry $registryHelper
+     * @param \Infrangible\Task\Helper\Data $helper
+     * @param LoggerInterface $logging
+     * @param DirectoryList $directoryList
+     * @param RunFactory $runFactory
+     * @param RunResourceFactory $runResourceFactory
+     * @param MailFactory $mailFactory
+     * @param Variables $variables
+     * @param Stores $storeHelper
+     * @param Data $sitemapHelper
+     * @param Writer $writer
+     */
     public function __construct(
-        Files $files,
+        File $file,
         Registry $registryHelper,
-        Data $helper,
+        \Infrangible\Task\Helper\Data $helper,
         LoggerInterface $logging,
         DirectoryList $directoryList,
         RunFactory $runFactory,
-        \Infrangible\Task\Model\ResourceModel\RunFactory $runResourceFactory,
+        RunResourceFactory $runResourceFactory,
         MailFactory $mailFactory,
-        Variables $variables,
-        Stores $storeHelper,
-        \Infrangible\Sitemap\Helper\Data $sitemapHelper,
-        \Infrangible\Core\Helper\Files $fileHelper,
-        Xml $xmlHelper
+        protected Variables $variables,
+        protected Stores $storeHelper,
+        protected Data $sitemapHelper,
+        protected Writer $writer
     ) {
         parent::__construct(
-            $files,
+            $file,
             $registryHelper,
             $helper,
             $logging,
@@ -77,69 +90,55 @@ class Sitemap extends Base
             $runResourceFactory,
             $mailFactory
         );
-
-        $this->variables = $variables;
-        $this->storeHelper = $storeHelper;
-        $this->sitemapHelper = $sitemapHelper;
-        $this->fileHelper = $fileHelper;
-        $this->xmlHelper = $xmlHelper;
     }
 
+    /**
+     * Returns the file name whose sitemap is generated, or null for the sitemaps of the store of the run.
+     *
+     * @return string|null
+     */
     public function getFileName(): ?string
     {
         return $this->fileName;
     }
 
+    /**
+     * Sets the file name whose sitemap is generated, or null for the sitemaps of the store of the run.
+     *
+     * @param string|null $fileName
+     *
+     * @return void
+     */
     public function setFileName(?string $fileName): void
     {
-        $this->fileName = $fileName;
-    }
-
-    protected function prepare(): void
-    {
+        $this->fileName = $fileName === '' ? null : $fileName;
     }
 
     /**
+     * Resets the URLs of a previous run.
+     *
+     * @return void
+     */
+    protected function prepare(): void
+    {
+        $this->urls = [];
+        $this->fileStoreIds = [];
+        $this->emptyRun = true;
+    }
+
+    /**
+     * Collects the URLs of the stores and writes the sitemaps, if the URLs of all stores could be collected.
+     *
+     * @return bool
      * @throws NoSuchEntityException
-     * @throws \Exception
+     * @throws Exception
      */
     protected function runTask(): bool
     {
         $result = true;
 
-        $fileName = $this->getFileName();
-
-        if ($this->variables->isEmpty($fileName)) {
-            $storeCode = $this->getStoreCode();
-
-            if ($storeCode === 'admin') {
-                foreach ($this->storeHelper->getStores() as $store) {
-                    $storeId = $this->variables->intValue($store->getStoreId());
-
-                    $result = $this->collectStoreSitemapUrls($storeId) && $result;
-                }
-            } else {
-                $store = $this->storeHelper->getStore($storeCode);
-
-                $storeId = $this->variables->intValue($store->getStoreId());
-
-                $result = $this->collectStoreSitemapUrls($storeId);
-            }
-        } else {
-            foreach ($this->storeHelper->getStores() as $store) {
-                $storeId = $this->variables->intValue($store->getId());
-
-                $storeFileName = $this->storeHelper->getStoreConfig(
-                    'infrangible_sitemap/general/file_name',
-                    'sitemap.xml',
-                    false,
-                    $storeId
-                );
-
-                if ($fileName === $storeFileName) {
-                    $result = $this->collectStoreSitemapUrls($storeId) && $result;
-                }
-            }
+        foreach ($this->getStoreIds() as $storeId) {
+            $result = $this->collectStoreSitemapUrls($storeId) && $result;
         }
 
         if ($result) {
@@ -149,32 +148,64 @@ class Sitemap extends Base
         return $result;
     }
 
+    /**
+     * Returns the IDs of the stores whose sitemaps are generated.
+     *
+     * @return int[]
+     * @throws NoSuchEntityException
+     */
+    protected function getStoreIds(): array
+    {
+        $fileName = $this->getFileName();
+
+        if ($fileName === null && $this->getStoreCode() !== 'admin') {
+            return [$this->variables->intValue($this->storeHelper->getStore($this->getStoreCode())->getId())];
+        }
+
+        $storeIds = [];
+
+        foreach ($this->storeHelper->getStores() as $store) {
+            $storeId = $this->variables->intValue($store->getId());
+
+            if ($fileName === null || $this->sitemapHelper->getFileName($storeId) === $fileName) {
+                $storeIds[] = $storeId;
+            }
+        }
+
+        return $storeIds;
+    }
+
+    /**
+     * Collects the URLs of the sources of the store.
+     *
+     * @param int $storeId
+     *
+     * @return bool false if a source failed or the file name of the store is invalid
+     */
     protected function collectStoreSitemapUrls(int $storeId): bool
     {
         if (! $this->sitemapHelper->isEnabled($storeId)) {
             return true;
         }
 
-        $this->logging->info(
-            sprintf(
-                'Collecting sitemap data for store with id: %d',
-                $storeId
-            )
-        );
+        $fileName = $this->sitemapHelper->getFileName($storeId);
 
-        $storeFileName = $this->storeHelper->getStoreConfig(
-            'infrangible_sitemap/general/file_name',
-            'sitemap.xml',
-            false,
-            $storeId
-        );
+        if (! $this->isValidFileName($fileName)) {
+            $this->logging->error(
+                sprintf('Invalid file name: %s of the sitemap of the store with ID: %d', $fileName, $storeId)
+            );
+
+            return false;
+        }
+
+        $this->logging->info(sprintf('Collecting sitemap URLs of the store with ID: %d', $storeId));
 
         try {
             $sources = $this->sitemapHelper->getSources($storeId);
-        } catch (\Exception $exception) {
+        } catch (LocalizedException $exception) {
             $this->logging->error(
                 sprintf(
-                    'Could not initialize sources of store with id: %d because: %s',
+                    'Could not initialize the sources of the store with ID: %d because: %s',
                     $storeId,
                     $exception->getMessage()
                 )
@@ -183,30 +214,17 @@ class Sitemap extends Base
             return false;
         }
 
+        $this->fileStoreIds[ $fileName ] ??= $storeId;
+        $this->urls[ $fileName ] ??= [];
+
         foreach ($sources as $sourceName => $source) {
             try {
-                $this->logging->info(
-                    sprintf(
-                        'Getting sitemap data for store with id: %d from source with name: %s',
-                        $storeId,
-                        $sourceName
-                    )
-                );
-
                 $storeData = $source->getStoreData($storeId);
-
-                $this->logging->info(
-                    sprintf(
-                        'Found %d entries for store with id: %d from source with name: %s',
-                        count($storeData),
-                        $storeId,
-                        $sourceName
-                    )
-                );
-            } catch (\Exception $exception) {
+                $sitemapUrls = $source->transformStoreData($storeId, $storeData);
+            } catch (Exception $exception) {
                 $this->logging->error(
                     sprintf(
-                        'Could not get source data of source with name: %s in store with id: %d because: %s',
+                        'Could not get the URLs of the source: %s in the store with ID: %d because: %s',
                         $sourceName,
                         $storeId,
                         $exception->getMessage()
@@ -216,59 +234,27 @@ class Sitemap extends Base
                 return false;
             }
 
-            try {
-                $this->logging->info(
-                    sprintf(
-                        'Transforming sitemap data for store with id: %d from source with name: %s',
-                        $storeId,
-                        $sourceName
-                    )
-                );
-
-                $sitemapUrls = $source->transformStoreData(
-                    $storeId,
-                    $storeData
-                );
-
-                $this->logging->info(
-                    sprintf(
-                        'Transformed %d sitemap urls for store with id: %d from source with name: %s',
-                        count($sitemapUrls),
-                        $storeId,
-                        $sourceName
-                    )
-                );
-            } catch (\Exception $exception) {
-                $this->logging->error(
-                    sprintf(
-                        'Could not transform source data of source with name: %s in store with id: %d because: %s',
-                        $sourceName,
-                        $storeId,
-                        $exception->getMessage()
-                    )
-                );
-
-                return false;
-            }
-
-            if (! array_key_exists(
-                $storeFileName,
-                $this->urls
-            )) {
-                $this->urls[ $storeFileName ] = [];
-            }
-
-            $this->urls[ $storeFileName ] = array_merge(
-                $this->urls[ $storeFileName ],
-                $sitemapUrls
+            $this->logging->info(
+                sprintf(
+                    'Found %d URL(s) of the source: %s in the store with ID: %d',
+                    count($sitemapUrls),
+                    $sourceName,
+                    $storeId
+                )
             );
+
+            array_push($this->urls[ $fileName ], ...$sitemapUrls);
         }
 
         return true;
     }
 
     /**
-     * @throws \Exception
+     * Writes the collected URLs into their files and, with several files, the main sitemap as their index.
+     *
+     * @return void
+     * @throws NoSuchEntityException
+     * @throws Exception
      */
     protected function writeSitemaps(): void
     {
@@ -276,264 +262,81 @@ class Sitemap extends Base
             return;
         }
 
-        if (count($this->urls) > 1) {
-            foreach (array_keys($this->urls) as $fileName) {
-                if (basename($fileName) === 'sitemap.xml') {
-                    throw new \Exception(
-                        'If data is split into multiple files, no file must be named sitemap.xml in configuration.'
-                    );
-                }
-            }
+        $writeMainSitemap = count($this->urls) > 1 &&
+            $this->storeHelper->getDefaultConfigFlag('infrangible_sitemap/general/main', true);
+
+        if ($writeMainSitemap && array_key_exists(self::MAIN_FILE_NAME, $this->urls)) {
+            throw new LocalizedException(
+                __(
+                    'If the stores have several files, no store may use the file %1, which becomes their index.',
+                    self::MAIN_FILE_NAME
+                )
+            );
         }
 
         $this->setEmptyRun(false);
 
-        $lastModDate = $this->storeHelper->getDate()->format('Y-m-d');
+        $lastModified = gmdate('Y-m-d');
 
-        $publicUrlPath = $this->directoryList->getUrlPath('pub');
-
-        $allSitemaps = [];
+        $sitemaps = [];
 
         foreach ($this->urls as $fileName => $fileUrls) {
-            $this->logging->info(
-                sprintf(
-                    'Collected %d sitemap urls into file with name: %s',
-                    count($fileUrls),
-                    $fileName
-                )
-            );
+            $baseUrl = $this->sitemapHelper->getBaseUrl($this->fileStoreIds[ $fileName ]);
 
-            $sitemapEntries = [];
+            $count = $this->writer->writeSitemap($fileName, $baseUrl, $fileUrls, $lastModified);
 
-            foreach ($fileUrls as $fileUrl) {
-                $sitemapEntry = [
-                    'loc'        => $fileUrl->getUrl(),
-                    'lastmod'    => $fileUrl->getLastModified(),
-                    'changefreq' => $fileUrl->getChangeFrequency(),
-                    'priority'   => $fileUrl->getPriority()
-                ];
+            $this->logging->info(sprintf('Wrote %d unique URL(s) into the sitemap: %s', $count, $fileName));
 
-                $images = $fileUrl->getImages();
-
-                if (count($images) > 0) {
-                    foreach ($images as $image) {
-                        $sitemapEntry[ 'image:image' ][] = [
-                            'image:loc'     => $image->getUrl(),
-                            'image:title'   => $image->getTitle(),
-                            'image:caption' => $image->getCaption()
-                        ];
-                    }
-                }
-
-                $dataObjects = $fileUrl->getDataObjects();
-
-                if (count($dataObjects) > 0) {
-                    $pageMapDataObjects = [];
-
-                    foreach ($dataObjects as $dataObject) {
-                        $pageMapDataObjectAttributes = [];
-
-                        foreach ($dataObject->getAttributes() as $dataObjectAttribute) {
-                            $pageMapDataObjectAttributes[] = [
-                                '@name'  => $dataObjectAttribute->getName(),
-                                '@value' => $dataObjectAttribute->getValue()
-                            ];
-                        }
-
-                        $pageMapDataObjects[] = [
-                            '@type'     => $dataObject->getType(),
-                            'Attribute' => $pageMapDataObjectAttributes
-                        ];
-                    }
-
-                    $sitemapEntry[ 'PageMap' ] = [
-                        '@xmlns'     => 'http://www.google.com/schemas/sitemap-pagemap/1.0',
-                        'DataObject' => $pageMapDataObjects
-                    ];
-                }
-
-                $sitemapEntries[] = $sitemapEntry;
-            }
-
-            $sitemapUrls = array_map(
-                function (array $sitemapEntry) {
-                    return $sitemapEntry[ 'loc' ];
-                },
-                $sitemapEntries
-            );
-
-            $uniqueSitemapUrls = array_unique($sitemapUrls);
-
-            $urls = array_values(
-                array_intersect_key(
-                    $sitemapEntries,
-                    $uniqueSitemapUrls
-                )
-            );
-
-            $urlChunks = array_chunk(
-                $urls,
-                $this->chunkSize
-            );
-
-            $filePath = $this->fileHelper->determineFilePath(
-                $publicUrlPath === 'pub' ? $fileName : sprintf(
-                    'pub/%s',
-                    $fileName
-                )
-            );
-
-            if (count($urlChunks) > 1) {
-                $this->logging->info(
-                    sprintf(
-                        'Splitting %d unique sitemap urls into %d files',
-                        count($fileUrls),
-                        count($urlChunks)
-                    )
-                );
-
-                $sitemaps = [];
-
-                for ($i = 0; $i < count($urlChunks); $i++) {
-                    $chunkUrls = $urlChunks[ $i ];
-
-                    $pathInfo = pathinfo($filePath);
-
-                    $chunkFileName = sprintf(
-                        '%s/%s_%03d.%s',
-                        $pathInfo[ 'dirname' ],
-                        $pathInfo[ 'filename' ],
-                        $i + 1,
-                        $pathInfo[ 'extension' ]
-                    );
-
-                    $chunkFileName = preg_replace(
-                        '/^\.\//',
-                        '',
-                        $chunkFileName
-                    );
-
-                    $this->logging->info(
-                        sprintf(
-                            'Exporting %d unique sitemap urls into file with name: %s',
-                            count($chunkUrls),
-                            $chunkFileName
-                        )
-                    );
-
-                    $this->xmlHelper->write(
-                        $chunkFileName,
-                        'urlset',
-                        [
-                            'xmlns'       => 'http://www.sitemaps.org/schemas/sitemap/0.9',
-                            'xmlns:image' => 'http://www.google.com/schemas/sitemap-image/1.1'
-                        ],
-                        ['url' => $chunkUrls]
-                    );
-
-                    $this->logging->info(
-                        sprintf(
-                            'Finished writing chunk data to: %s',
-                            $chunkFileName
-                        )
-                    );
-
-                    $sitemaps[] = [
-                        'loc'     => sprintf(
-                            '%s%s',
-                            $this->storeHelper->getWebUrl(),
-                            $chunkFileName
-                        ),
-                        'lastmod' => $lastModDate
-                    ];
-                }
-
-                $this->logging->info(
-                    sprintf(
-                        'Exporting sitemap index into file with path: %s',
-                        $filePath
-                    )
-                );
-
-                $this->xmlHelper->write(
-                    $filePath,
-                    'sitemapindex',
-                    [
-                        'xmlns'       => 'http://www.sitemaps.org/schemas/sitemap/0.9',
-                        'xmlns:image' => 'http://www.google.com/schemas/sitemap-image/1.1'
-                    ],
-                    ['sitemap' => $sitemaps]
-                );
-            } else {
-                $this->logging->info(
-                    sprintf(
-                        'Exporting %d unique sitemap urls into file with path: %s',
-                        count($urls),
-                        $filePath
-                    )
-                );
-
-                $this->xmlHelper->write(
-                    $filePath,
-                    'urlset',
-                    [
-                        'xmlns'       => 'http://www.sitemaps.org/schemas/sitemap/0.9',
-                        'xmlns:image' => 'http://www.google.com/schemas/sitemap-image/1.1'
-                    ],
-                    ['url' => $urls]
-                );
-            }
-
-            $allSitemaps[] = [
-                'loc'     => sprintf(
-                    '%s%s',
-                    $this->storeHelper->getWebUrl(),
-                    $fileName
-                ),
-                'lastmod' => $lastModDate
-            ];
+            $sitemaps[] = ['loc' => $baseUrl . $fileName, 'lastmod' => $lastModified];
         }
 
-        if (count($this->urls) > 1) {
-            $generateMainSitemap = $this->storeHelper->getDefaultConfigFlag(
-                'infrangible_sitemap/general/main',
-                true
-            );
-
-            if ($generateMainSitemap) {
-                $filePath = $this->fileHelper->determineFilePath(
-                    $publicUrlPath === 'pub' ? 'sitemap.xml' : 'pub/sitemap.xml'
-                );
-
-                $this->logging->info(
-                    sprintf(
-                        'Exporting sitemap index into file with path: %s',
-                        $filePath
-                    )
-                );
-
-                $this->xmlHelper->write(
-                    $filePath,
-                    'sitemapindex',
-                    [
-                        'xmlns'       => 'http://www.sitemaps.org/schemas/sitemap/0.9',
-                        'xmlns:image' => 'http://www.google.com/schemas/sitemap-image/1.1'
-                    ],
-                    ['sitemap' => $allSitemaps]
-                );
-            }
+        if ($writeMainSitemap) {
+            $this->writer->writeIndex(self::MAIN_FILE_NAME, $sitemaps);
         }
     }
 
-    protected function dismantle(bool $success): void
+    /**
+     * Tells whether the file name is a relative path of an XML file in the document root, without "..".
+     *
+     * @param string $fileName
+     *
+     * @return bool
+     */
+    protected function isValidFileName(string $fileName): bool
     {
+        return preg_match('/^(?:[a-z0-9_-]+\/)*[a-z0-9_.-]+\.xml$/i', $fileName) === 1 &&
+            ! in_array('..', explode('/', $fileName), true);
     }
 
+    /**
+     * Does nothing after the run.
+     *
+     * @param bool $success
+     *
+     * @return void
+     */
+    protected function dismantle(bool $success): void // phpcs:ignore Magento2.CodeAnalysis.EmptyBlock
+    {
+        // the files are written at the end of the run, there is nothing to clean up
+    }
+
+    /**
+     * Tells whether the run wrote no sitemap.
+     *
+     * @return bool
+     */
     public function isEmptyRun(): bool
     {
         return $this->emptyRun;
     }
 
+    /**
+     * Sets whether the run wrote no sitemap.
+     *
+     * @param bool $emptyRun
+     *
+     * @return void
+     */
     public function setEmptyRun(bool $emptyRun): void
     {
         $this->emptyRun = $emptyRun;

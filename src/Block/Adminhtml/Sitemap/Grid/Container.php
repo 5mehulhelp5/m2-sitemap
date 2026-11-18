@@ -2,16 +2,25 @@
 
 declare(strict_types=1);
 
+/**
+ * @author      Andreas Knollmann
+ * @copyright   Copyright (c) 2014-2026 Softwareentwicklung Andreas Knollmann
+ * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ */
+
 namespace Infrangible\Sitemap\Block\Adminhtml\Sitemap\Grid;
 
 /**
- * @author      Andreas Knollmann
- * @copyright   2014-2025 Softwareentwicklung Andreas Knollmann
- * @license     http://www.opensource.org/licenses/mit-license.php MIT
+ * The container of the list of sitemap files, with the button to generate all sitemaps.
  */
 class Container extends \Infrangible\BackendWidget\Block\Grid\Container
 {
-    protected function _construct()
+    /**
+     * Adds the button to generate all sitemaps.
+     *
+     * @return void
+     */
+    public function _construct(): void
     {
         parent::_construct();
 
@@ -20,8 +29,9 @@ class Container extends \Infrangible\BackendWidget\Block\Grid\Container
             [
                 'label'   => __('Generate All'),
                 'onclick' => sprintf(
-                    "confirmSetLocation('Are you sure?', '%s')",
-                    $this->_urlBuilder->getUrl('infrangible_sitemap/sitemap/all')
+                    "confirmSetLocation('%s', '%s')",
+                    $this->_escaper->escapeJs(__('Do you want to generate all sitemaps?')->render()),
+                    $this->_escaper->escapeJs($this->_urlBuilder->getUrl('infrangible_sitemap/sitemap/all'))
                 ),
                 'class'   => 'add primary'
             ]
