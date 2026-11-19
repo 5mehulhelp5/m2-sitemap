@@ -1,7 +1,7 @@
 # Infrangible Sitemap
 
 Generates XML sitemaps of the products (with their images), categories and CMS pages of every store, as task of
-[Infrangible Task](https://github.com/infrangible-dev/m2-task): every night by cron, from the admin or on the console.
+[Infrangible Task](https://www.infrangible.dev/modules/task): every night by cron, from the admin or on the console.
 An alternative to the sitemap of Magento.
 
 ## Sitemaps
