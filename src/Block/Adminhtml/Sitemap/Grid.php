@@ -60,6 +60,7 @@ class Grid extends \Infrangible\BackendWidget\Block\Grid
      * Adds the action to generate the file of the row.
      *
      * @return void
+     * @throws Exception
      */
     protected function addActionColumn(): void
     {

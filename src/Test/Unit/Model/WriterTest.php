@@ -89,7 +89,7 @@ class WriterTest extends TestCase
             'sitemap.xml',
             'https://shop.test/',
             [
-                $this->createSitemapUrl('https://shop.test/a.html', '2026-11-01'),
+                $this->createSitemapUrl('https://shop.test/a.html'),
                 $this->createSitemapUrl('https://shop.test/a.html', '2026-11-02'),
                 new SitemapUrl(),
                 $this->createSitemapUrl('https://shop.test/b.html')
