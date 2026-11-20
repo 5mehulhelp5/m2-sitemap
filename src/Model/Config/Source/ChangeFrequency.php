@@ -11,6 +11,7 @@ declare(strict_types=1);
 namespace Infrangible\Sitemap\Model\Config\Source;
 
 use Magento\Framework\Data\OptionSourceInterface;
+use Magento\Framework\Phrase;
 
 /**
  * The change frequencies of the sitemap protocol.
@@ -21,7 +22,7 @@ class ChangeFrequency implements OptionSourceInterface
      * Returns the change frequencies as options.
      *
      * @return array
-     * @phpstan-return array<int, array{value: string, label: \Magento\Framework\Phrase}>
+     * @phpstan-return array<int, array{value: string, label: Phrase}>
      */
     public function toOptionArray(): array
     {
