@@ -203,11 +203,13 @@ class Writer
         $dataObjects = [];
 
         foreach ($sitemapUrl->getDataObjects() as $dataObject) {
-            $attributes = [];
-
-            foreach ($dataObject->getAttributes() as $attribute) {
-                $attributes[] = ['@name' => $attribute->getName(), '@value' => $attribute->getValue()];
-            }
+            $attributes = array_map(
+                static fn(ISitemapUrlDataObjectAttribute $attribute): array => [
+                    '@name'  => $attribute->getName(),
+                    '@value' => $attribute->getValue()
+                ],
+                array_values($dataObject->getAttributes())
+            );
 
             $dataObjects[] = ['@type' => $dataObject->getType(), 'Attribute' => $attributes];
         }

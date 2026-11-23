@@ -121,11 +121,10 @@ class WriterTest extends TestCase
      */
     public function testSplitIntoFiles(): void
     {
-        $sitemapUrls = [];
-
-        foreach (['a', 'b', 'c', 'd', 'e'] as $page) {
-            $sitemapUrls[] = $this->createSitemapUrl(sprintf('https://shop.test/%s.html', $page));
-        }
+        $sitemapUrls = array_map(
+            fn(string $page): SitemapUrl => $this->createSitemapUrl(sprintf('https://shop.test/%s.html', $page)),
+            ['a', 'b', 'c', 'd', 'e']
+        );
 
         $count = $this->createWriter(2)->writeSitemap('maps/de.xml', 'https://shop.test/', $sitemapUrls, '2026-11-18');
 
